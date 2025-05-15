@@ -1,16 +1,41 @@
+
 #!/usr/bin/env python3
 
 import sys
 import json
 import time
-from urllib import request
-
+from urllib import request, error
+import argparse
+import subprocess
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--tls', action='store_true')
+    parser.add_argument('--insecure', action='store_true')
+    parser.add_argument('--user', type=str)
+    parser.add_argument('--password', type=str)
+    parser.add_argument('host')
+    parser.add_argument('port')
+    args = parser.parse_args(sys.argv[1:])
 
-    host = sys.argv[1]
-    port = sys.argv[2]
+    host = args.host
+    port = args.port
     tunnel_id = host + '-' + port
+
+    def cleanup():
+        delete_url = 'http://127.0.0.1:2019/id/' + tunnel_id
+        req = request.Request(method='DELETE', url=delete_url)
+        try:
+            request.urlopen(req)
+            return True
+        except error.HTTPError as e:
+            if e.code in [404, 500]:
+                return False
+            else:
+                raise
+
+    print('Cleaning up any potential stale registrations')
+    while cleanup(): pass
 
     caddy_add_route_request = {
         "@id": tunnel_id,
@@ -25,23 +50,41 @@ if __name__ == '__main__':
         }]
     }
 
+    if args.tls:
+        tls_options = {}
+        if args.insecure:
+            tls_options['insecure_skip_verify'] = True
+        caddy_add_route_request['handle'][0]['transport'] = {"protocol": "http", "tls": tls_options}
+
+    if args.user:
+        password = args.password or ''
+        hashed_password = subprocess.check_output(
+            ['caddy', 'hash-password', '-plaintext', password],
+            text=True).strip()
+        caddy_add_route_request['handle'].insert(0, {
+            "handler": "authentication",
+            "providers": {
+                "http_basic": {
+                    "accounts": [{ "username": args.user, "password": hashed_password }],
+                    "hash_cache": {}
+                }
+            }
+        })
+
     body = json.dumps(caddy_add_route_request).encode('utf-8')
     headers = {
         'Content-Type': 'application/json'
     }
-    create_url = 'http://127.0.0.1:2019/config/apps/http/servers/sirtunnel/routes'
+    create_url = 'http://127.0.0.1:2019/config/apps/http/servers/default/routes'
     req = request.Request(method='POST', url=create_url, headers=headers)
     request.urlopen(req, body)
 
-    print("Tunnel created successfully")
+    print(f"Tunnel {host} created successfully")
 
     while True:
         try:
             time.sleep(1)
         except KeyboardInterrupt:
-
             print("Cleaning up tunnel")
-            delete_url = 'http://127.0.0.1:2019/id/' + tunnel_id
-            req = request.Request(method='DELETE', url=delete_url)
-            request.urlopen(req)
+            cleanup()
             break
