@@ -11,6 +11,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--tls', action='store_true')
+    parser.add_argument('--insecure', action='store_true')
     parser.add_argument('host')
     parser.add_argument('port')
     args = parser.parse_args(sys.argv[1:])
@@ -34,6 +35,8 @@ if __name__ == '__main__':
 
     if args.tls:
         tls_options = {}
+        if args.insecure:
+            tls_options['insecure_skip_verify'] = True
         caddy_add_route_request['handle'][0]['transport'] = {"protocol": "http", "tls": tls_options}
 
     body = json.dumps(caddy_add_route_request).encode('utf-8')
